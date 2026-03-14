@@ -39,12 +39,18 @@ def main():
     # Sidebar
     st.sidebar.header("Asset & Daten")
     symbols = get_top_30_symbols()
+    # Standard: gespeichertes Symbol oder erstes
     default_symbol = st.session_state.get('optimized_symbol', symbols[0] if symbols else 'BTC/USDT')
-    symbol = st.sidebar.selectbox("Symbol", symbols, index=symbols.index(default_symbol) if default_symbol in symbols else 0)
+    # Falls das gespeicherte Symbol nicht mehr in der Liste ist (z.B. nach Update), Fallback
+    if default_symbol not in symbols:
+        default_symbol = symbols[0]
+    symbol = st.sidebar.selectbox("Symbol", symbols, index=symbols.index(default_symbol))
 
     timeframes = ['1m', '5m', '15m', '30m', '1h', '4h', '1d']
     default_tf = st.session_state.get('optimized_timeframe', '15m')
-    timeframe = st.sidebar.selectbox("Timeframe", timeframes, index=timeframes.index(default_tf) if default_tf in timeframes else 2)
+    if default_tf not in timeframes:
+        default_tf = '15m'
+    timeframe = st.sidebar.selectbox("Timeframe", timeframes, index=timeframes.index(default_tf))
 
     default_limit = st.session_state.get('optimized_limit', 1500)
     limit = st.sidebar.slider("Anzahl Kerzen", min_value=500, max_value=5000, value=default_limit, step=100)
@@ -91,7 +97,7 @@ def main():
         'use_wick': st.sidebar.checkbox("Wick Rejection prüfen",
                                          value=get_param('use_wick', True)),
         'use_bullish': st.sidebar.checkbox("Bullische Kerze (close>open) bei Long",
-                                            value=get_param('use_bullish', False)),  # Im Screenshot war es aus
+                                            value=get_param('use_bullish', False)),
         # Volume
         'vol_len': st.sidebar.number_input("Volume SMA Länge", 1, 100,
                                             value=get_param('vol_len', 15)),
@@ -142,7 +148,7 @@ def main():
             line=dict(color='orange', width=2.5), name='Supertrend'
         ), row=1, col=1)
 
-    # S/R-Linien (nur die letzten max_levels)
+    # S/R-Linien
     for lvl in sup_levels[-params['max_levels']:]:
         fig.add_hline(y=lvl, line_dash="dash", line_color="lime", opacity=0.6)
     for lvl in res_levels[-params['max_levels']:]:
