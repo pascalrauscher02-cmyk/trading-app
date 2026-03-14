@@ -15,7 +15,8 @@ st.title("🔧 Multi-Asset & Multi-Timeframe Optimierung")
 st.markdown("""
 Wähle mehrere Symbole und Timeframes aus. Für jede Kombination wird eine eigene Optimierung gestartet.  
 Die besten 5 Ergebnisse (nach Bewertungsmetrik) werden unten in einer Tabelle angezeigt.  
-Mit dem Button **Übernehmen** gelangst du zurück zur Hauptseite, wo Symbol, Timeframe und die optimierten Parameter bereits eingestellt sind.
+Mit dem Button **Übernehmen** gelangst du zurück zur Hauptseite, wo Symbol, Timeframe und die optimierten Parameter bereits eingestellt sind.  
+Mit **Trades anzeigen** kannst du dir die komplette Trade-Liste für das jeweilige Ergebnis ansehen.
 """)
 
 all_symbols = get_top_30_symbols()
@@ -26,7 +27,6 @@ selected_timeframes = st.multiselect("Timeframes", timeframes, default=['15m', '
 limit = st.slider("Anzahl Kerzen pro Backtest", 500, 5000, 1500, 100)
 n_trials = st.number_input("Optimierungsdurchläufe pro Kombination", 10, 200, 30, 10)
 
-# Feste Parameter (werden nicht optimiert)
 fixed_params = {
     'left_bars': 5,
     'right_bars': 5,
@@ -55,21 +55,20 @@ def optimize_for(symbol, timeframe):
         if df is None or df.empty:
             return -9999
         data, _, _, _ = calculate_strategy(df, params)
-        profit, _, winrate, num_trades, _ = run_backtest(data, params)  # profit in %, winrate in %
-        # Kombinierte Metrik: Profit + Winrate/10
-        return profit + winrate / 10
+        profit_pct, _, winrate, _, _ = run_backtest(data, params)  # profit_pct in %
+        return profit_pct + winrate / 10
 
     study = optuna.create_study(direction='maximize')
     study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
-    
+
     best_params = study.best_params
     params = fixed_params.copy()
     params.update(best_params)
     df = fetch_bitget_data(symbol, timeframe, limit)
     data, _, _, _ = calculate_strategy(df, params)
     profit_pct, profit_usdt, winrate, num_trades, trades_df = run_backtest(data, params)
-    
-    # Profitfaktor berechnen
+
+    # Profitfaktor
     if not trades_df.empty:
         closed = trades_df[trades_df['type'].str.contains('Exit')]
         if not closed.empty:
@@ -80,30 +79,32 @@ def optimize_for(symbol, timeframe):
             profit_factor = 0
     else:
         profit_factor = 0
-    
+
     return {
         'symbol': symbol,
         'timeframe': timeframe,
         'best_value': study.best_value,
         'profit_pct': profit_pct,
+        'profit_usdt': profit_usdt,
         'winrate': winrate,
         'num_trades': num_trades,
         'profit_factor': profit_factor,
-        'params': best_params
+        'params': best_params,
+        'trades_df': trades_df  # speichern für spätere Anzeige
     }
 
 if st.button("Batch-Optimierung starten"):
     if not selected_symbols or not selected_timeframes:
         st.error("Bitte mindestens ein Symbol und ein Timeframe auswählen.")
         st.stop()
-    
+
     total_combinations = len(selected_symbols) * len(selected_timeframes)
     progress_bar = st.progress(0)
     status_text = st.empty()
-    
+
     results = []
     count = 0
-    
+
     for sym in selected_symbols:
         for tf in selected_timeframes:
             count += 1
@@ -114,16 +115,17 @@ if st.button("Batch-Optimierung starten"):
             except Exception as e:
                 st.warning(f"Fehler bei {sym} ({tf}): {e}")
             progress_bar.progress(count / total_combinations)
-    
+
     progress_bar.empty()
     status_text.text("Optimierung abgeschlossen!")
-    
+
     if results:
         results.sort(key=lambda x: x['best_value'], reverse=True)
         top5 = results[:5]
-        
+
         st.subheader("🏆 Top 5 Ergebnisse")
-        
+
+        # Tabelle der Top 5
         table_data = []
         for i, res in enumerate(top5):
             table_data.append({
@@ -139,29 +141,44 @@ if st.button("Batch-Optimierung starten"):
                 'zone_pct': res['params']['zone_pct'],
                 'wick_mult': res['params']['wick_mult'],
             })
-        
         df_top = pd.DataFrame(table_data)
         st.dataframe(df_top, use_container_width=True, hide_index=True)
-        
-        st.subheader("Parameter übernehmen")
-        st.markdown("Klicke auf **Übernehmen** für das gewünschte Ergebnis – du wirst zur Hauptseite weitergeleitet.")
-        
+
+        st.subheader("Details und Übernahme")
         for i, res in enumerate(top5):
-            col1, col2, col3, col4, col5, col6, col7 = st.columns([1, 2, 2, 2, 2, 2, 2])
-            col1.write(f"**#{i+1}**")
-            col2.write(res['symbol'])
-            col3.write(res['timeframe'])
-            col4.write(f"{res['profit_pct']:.2f}%")
-            col5.write(f"{res['winrate']:.1f}%")
-            col6.write(f"{res['profit_factor']:.2f}")
-            if col7.button(f"Übernehmen", key=f"btn_{i}"):
-                # Alles in Session speichern
-                st.session_state['optimized_symbol'] = res['symbol']
-                st.session_state['optimized_timeframe'] = res['timeframe']
-                st.session_state['optimized_limit'] = limit
-                st.session_state['optimized_params'] = res['params']
-                st.session_state['use_optimized'] = True
-                st.session_state['show_optimized_message'] = True
-                st.switch_page("app.py")
+            with st.expander(f"#{i+1}: {res['symbol']} {res['timeframe']} – Profit: {res['profit_pct']:.2f}%", expanded=False):
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Winrate", f"{res['winrate']:.1f}%")
+                    st.metric("Trades", res['num_trades'])
+                with col2:
+                    st.metric("Profit Faktor", f"{res['profit_factor']:.2f}")
+                    st.metric("Gesamtprofit USDT", f"{res['profit_usdt']:.2f}")
+                with col3:
+                    st.write("Optimierte Parameter:")
+                    st.json(res['params'])
+
+                # Trades anzeigen
+                if st.button(f"Trades für #{i+1} anzeigen", key=f"show_trades_{i}"):
+                    st.subheader(f"Trade-Liste für {res['symbol']} {res['timeframe']}")
+                    if not res['trades_df'].empty:
+                        display = res['trades_df'].copy()
+                        display['time'] = display['time'].dt.strftime('%Y-%m-%d %H:%M')
+                        display['profit_pct'] = display['profit_pct'].round(2).astype(str) + ' %'
+                        display['profit_usdt'] = display['profit_usdt'].round(2).astype(str) + ' USDT'
+                        st.dataframe(display[['type', 'time', 'price', 'profit_pct', 'profit_usdt']],
+                                     use_container_width=True, hide_index=True)
+                    else:
+                        st.info("Keine Trades.")
+
+                # Übernehmen-Button
+                if st.button(f"Übernehmen #{i+1}", key=f"take_{i}"):
+                    st.session_state['optimized_symbol'] = res['symbol']
+                    st.session_state['optimized_timeframe'] = res['timeframe']
+                    st.session_state['optimized_limit'] = limit
+                    st.session_state['optimized_params'] = res['params']
+                    st.session_state['use_optimized'] = True
+                    st.session_state['show_optimized_message'] = True
+                    st.switch_page("app.py")
     else:
         st.warning("Keine Ergebnisse – bitte Einstellungen prüfen.")
