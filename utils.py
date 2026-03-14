@@ -43,38 +43,38 @@ def calculate_strategy(df, params):
 
     data = df.copy()
 
-  # --- Supertrend (robust mit Debug) ---
-st_col = None
-if len(data) >= params['st_period'] and params['use_st']:
-    try:
-        st_df = data.ta.supertrend(period=params['st_period'], multiplier=params['st_factor'])
-        if st_df is not None and not st_df.empty:
-            # Spaltennamen zur Diagnose (auskommentiert, falls du sie sehen willst)
-            # st.write("Supertrend Spalten:", st_df.columns.tolist())
-            trend_cols = [c for c in st_df.columns if 'SUPERT_' in c and not c.endswith('d_')]
-            dir_cols = [c for c in st_df.columns if c.endswith('d_')]
-            if trend_cols and dir_cols:
-                st_col = trend_cols[0]
-                dir_col = dir_cols[0]
-                data = pd.concat([data, st_df[[st_col, dir_col]]], axis=1)
-                data['bullish_trend'] = data[dir_col] < 0
-                data['bearish_trend'] = data[dir_col] > 0
+    # --- Supertrend (robust mit Debug) ---
+    st_col = None
+    if len(data) >= params['st_period'] and params['use_st']:
+        try:
+            st_df = data.ta.supertrend(period=params['st_period'], multiplier=params['st_factor'])
+            if st_df is not None and not st_df.empty:
+                # Spaltennamen zur Diagnose (auskommentiert)
+                # st.write("Supertrend Spalten:", st_df.columns.tolist())
+                trend_cols = [c for c in st_df.columns if 'SUPERT_' in c and not c.endswith('d_')]
+                dir_cols = [c for c in st_df.columns if c.endswith('d_')]
+                if trend_cols and dir_cols:
+                    st_col = trend_cols[0]
+                    dir_col = dir_cols[0]
+                    data = pd.concat([data, st_df[[st_col, dir_col]]], axis=1)
+                    data['bullish_trend'] = data[dir_col] < 0
+                    data['bearish_trend'] = data[dir_col] > 0
+                else:
+                    st.warning(f"Supertrend-Spalten nicht gefunden. Vorhandene Spalten: {st_df.columns.tolist()}")
+                    data['bullish_trend'] = False
+                    data['bearish_trend'] = False
             else:
-                # Detaillierte Warnung mit den gefundenen Spalten
-                st.warning(f"Supertrend-Spalten nicht gefunden. Vorhandene Spalten: {st_df.columns.tolist()}")
+                st.warning("Supertrend-DataFrame ist leer.")
                 data['bullish_trend'] = False
                 data['bearish_trend'] = False
-        else:
-            st.warning("Supertrend-DataFrame ist leer.")
+        except Exception as e:
+            st.warning(f"Supertrend konnte nicht berechnet werden: {e}")
             data['bullish_trend'] = False
             data['bearish_trend'] = False
-    except Exception as e:
-        st.warning(f"Supertrend konnte nicht berechnet werden: {e}")
+    else:
         data['bullish_trend'] = False
         data['bearish_trend'] = False
-else:
-    data['bullish_trend'] = False
-    data['bearish_trend'] = False
+
     # --- Volume SMA ---
     try:
         data.ta.sma(close='volume', length=params['vol_len'], append=True)
@@ -189,7 +189,6 @@ def run_backtest(data, params):
     missing = [col for col in required if col not in data.columns]
 
     if missing:
-        #st.warning(f"Backtest übersprungen – fehlende Spalten: {', '.join(missing)}")
         return 0.0, 0.0, 0, pd.DataFrame(columns=['type', 'time', 'price', 'profit_pct'])
 
     position = 0
