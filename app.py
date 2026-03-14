@@ -22,13 +22,11 @@ if not st.session_state.authenticated:
             st.error("Falsches Passwort")
     st.stop()
 
-# --- Haupt-App ---
 st.set_page_config(page_title="S/R + Wick Rejection + Supertrend", layout="wide")
 
 def main():
     st.title("S/R + Wick Rejection + Supertrend (ohne ATR)")
 
-    # Hinweisbox nach Übernahme aus Optimierung (mit Schließen-Button)
     if st.session_state.get('show_optimized_message', False):
         col1, col2 = st.columns([0.9, 0.1])
         with col1:
@@ -38,28 +36,24 @@ def main():
                 st.session_state['show_optimized_message'] = False
                 st.rerun()
 
-    # Sidebar – Asset, Timeframe, Live-Modus
+    # Sidebar
     st.sidebar.header("Asset & Daten")
     symbols = get_top_30_symbols()
-    
     default_symbol = st.session_state.get('optimized_symbol', symbols[0] if symbols else 'BTC/USDT')
     symbol = st.sidebar.selectbox("Symbol", symbols, index=symbols.index(default_symbol) if default_symbol in symbols else 0)
-    
+
     timeframes = ['1m', '5m', '15m', '30m', '1h', '4h', '1d']
     default_tf = st.session_state.get('optimized_timeframe', '15m')
     timeframe = st.sidebar.selectbox("Timeframe", timeframes, index=timeframes.index(default_tf) if default_tf in timeframes else 2)
-    
+
     default_limit = st.session_state.get('optimized_limit', 1500)
     limit = st.sidebar.slider("Anzahl Kerzen", min_value=500, max_value=5000, value=default_limit, step=100)
-    
-    # Handelskapital
+
     capital = st.sidebar.number_input("Handelskapital (USDT)", min_value=100, max_value=1000000, value=1000, step=100)
-    
     live_mode = st.sidebar.checkbox("Live-Update alle 30 Sekunden", value=True)
 
-    # Parameter
+    # Strategie-Parameter
     st.sidebar.header("Strategie-Einstellungen")
-
     if 'optimized_params' in st.session_state:
         st.sidebar.success("Optimierte Parameter verfügbar!")
         if st.sidebar.button("Optimierte Parameter übernehmen"):
@@ -107,18 +101,16 @@ def main():
                                          value=get_param('use_side', False)),
     }
 
-    # Flag zurücksetzen, nachdem Parameter gesetzt wurden
     if st.session_state.get('use_optimized', False):
         st.session_state['use_optimized'] = False
         st.session_state['show_optimized_message'] = True
 
-    # Daten laden & Strategie ausführen
+    # Daten laden & Strategie berechnen
     df = fetch_bitget_data(symbol, timeframe, limit)
     data, st_col, sup_levels, res_levels = calculate_strategy(df, params)
-
     profit_pct, profit_usdt, winrate, num_trades, trades_df = run_backtest(data, params, capital)
 
-    # Daten in Session speichern für Performance-Seite
+    # In Session speichern für Performance-Seite
     st.session_state['trades_df'] = trades_df
     st.session_state['data'] = data
 
@@ -143,7 +135,7 @@ def main():
             line=dict(color='orange', width=2.5), name='Supertrend'
         ), row=1, col=1)
 
-    # Nur die letzten max_levels Linien zeichnen (um Überladung zu vermeiden)
+    # Nur die letzten max_levels Linien zeichnen
     for lvl in sup_levels[-params['max_levels']:]:
         fig.add_hline(y=lvl, line_dash="dash", line_color="lime", opacity=0.6)
     for lvl in res_levels[-params['max_levels']:]:
@@ -175,7 +167,7 @@ def main():
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # Signale + Begründung
+    # Signale
     st.subheader("Letzte Signale & Begründung")
     recent_signals = data[data['reason'] != ""].tail(5)
     if recent_signals.empty:
@@ -186,14 +178,15 @@ def main():
             color = "green" if row['long_cond'] else "red"
             st.markdown(f"<span style='color:{color}'><b>{direction}</b></span> {row['timestamp'].strftime('%H:%M')} → {row['reason']}", unsafe_allow_html=True)
 
-    # Trades
-    st.subheader("Trade-Historie")
+    # --- Alle Trades anzeigen (komplette Tabelle) ---
+    st.subheader("Trade-Historie (alle Trades)")
     if not trades_df.empty:
-        display_df = trades_df.tail(15).copy()
+        display_df = trades_df.copy()
         display_df['time'] = display_df['time'].dt.strftime('%Y-%m-%d %H:%M')
         display_df['profit_pct'] = display_df['profit_pct'].round(2).astype(str) + ' %'
         display_df['profit_usdt'] = display_df['profit_usdt'].round(2).astype(str) + ' USDT'
-        st.dataframe(display_df[['type', 'time', 'price', 'profit_pct', 'profit_usdt']], 
+        # Auswahl der Spalten für bessere Lesbarkeit
+        st.dataframe(display_df[['type', 'time', 'price', 'profit_pct', 'profit_usdt']],
                      use_container_width=True, hide_index=True)
     else:
         st.info("Noch keine Trades.")
