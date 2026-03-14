@@ -22,10 +22,10 @@ if not st.session_state.authenticated:
             st.error("Falsches Passwort")
     st.stop()
 
-st.set_page_config(page_title="S/R + Wick Rejection + Supertrend", layout="wide")
+st.set_page_config(page_title="S/R + Wick Rejection + Supertrend (ATR-basiert)", layout="wide")
 
 def main():
-    st.title("S/R + Wick Rejection + Supertrend (ohne ATR)")
+    st.title("📈 Dynamische S/R + Wick Rejection + Supertrend (ATR-basiert)")
 
     if st.session_state.get('show_optimized_message', False):
         col1, col2 = st.columns([0.9, 0.1])
@@ -67,37 +67,44 @@ def main():
             return default
 
     params = {
-        'st_factor': st.sidebar.number_input("Supertrend Multiplier", 1.0, 6.0,
-                                              value=get_param('st_factor', 3.0), step=0.1),
-        'st_period': st.sidebar.number_input("Supertrend Periode", 5, 30,
-                                              value=get_param('st_period', 10), step=1),
+        # Supertrend
+        'st_factor': st.sidebar.number_input("Supertrend Multiplier", 1.0, 20.0,
+                                              value=get_param('st_factor', 10.0), step=0.5),
+        'st_period': st.sidebar.number_input("Supertrend Periode", 1, 50,
+                                              value=get_param('st_period', 8), step=1),
         'use_st': st.sidebar.checkbox("Supertrend als Filter + Exit",
                                        value=get_param('use_st', True)),
-        'left_bars': st.sidebar.number_input("Pivot Left Bars", 3, 20,
+        # S/R Pivots
+        'left_bars': st.sidebar.number_input("Pivot Left Bars", 1, 20,
                                               value=get_param('left_bars', 5)),
-        'right_bars': st.sidebar.number_input("Pivot Right Bars", 3, 20,
-                                               value=get_param('right_bars', 5)),
-        'max_levels': st.sidebar.number_input("Max. historische Levels", 3, 20,
-                                               value=get_param('max_levels', 8)),
-        'zone_pct': st.sidebar.number_input("S/R-Zone Breite (%)", 0.1, 3.0,
-                                             value=get_param('zone_pct', 0.6), step=0.05),
-        'wick_mult': st.sidebar.number_input("Wick × Body", 1.0, 5.0,
-                                              value=get_param('wick_mult', 2.0), step=0.1),
+        'right_bars': st.sidebar.number_input("Pivot Right Bars", 1, 20,
+                                               value=get_param('right_bars', 6)),
+        'max_levels': st.sidebar.number_input("Max. S/R Levels", 1, 20,
+                                               value=get_param('max_levels', 4)),
+        'atr_period': st.sidebar.number_input("ATR Periode (für Zone)", 1, 50,
+                                               value=get_param('atr_period', 8)),
+        'zone_atr_mult': st.sidebar.number_input("Zone-Toleranz (ATR x)", 0.1, 5.0,
+                                                  value=get_param('zone_atr_mult', 0.4), step=0.1),
+        # Wick
+        'wick_mult': st.sidebar.number_input("Wick Stärke (× Body)", 1.0, 10.0,
+                                              value=get_param('wick_mult', 6.0), step=0.5),
         'use_wick': st.sidebar.checkbox("Wick Rejection prüfen",
                                          value=get_param('use_wick', True)),
-        'use_bullish': st.sidebar.checkbox("Kerzenrichtung prüfen",
-                                            value=get_param('use_bullish', True)),
-        'vol_len': st.sidebar.number_input("Volumen-SMA Länge", 10, 60,
-                                            value=get_param('vol_len', 20)),
-        'vol_mult': st.sidebar.number_input("Volumen-Multiplikator", 1.0, 3.0,
+        'use_bullish': st.sidebar.checkbox("Bullische Kerze (close>open) bei Long",
+                                            value=get_param('use_bullish', False)),  # Im Screenshot war es aus
+        # Volume
+        'vol_len': st.sidebar.number_input("Volume SMA Länge", 1, 100,
+                                            value=get_param('vol_len', 15)),
+        'vol_mult': st.sidebar.number_input("Volume Multiplier", 1.0, 5.0,
                                              value=get_param('vol_mult', 1.3), step=0.1),
-        'use_vol': st.sidebar.checkbox("Hohes Volumen erforderlich",
+        'use_vol': st.sidebar.checkbox("Volume-Filter",
                                         value=get_param('use_vol', True)),
-        'adx_len': st.sidebar.number_input("ADX Periode", 8, 25,
-                                            value=get_param('adx_len', 14)),
-        'adx_thresh': st.sidebar.number_input("ADX < = Seitwärts", 15, 40,
+        # ADX / Seitwärts
+        'adx_len': st.sidebar.number_input("ADX Länge", 1, 50,
+                                            value=get_param('adx_len', 9)),
+        'adx_thresh': st.sidebar.number_input("ADX Threshold (unter = Seitwärts)", 1, 100,
                                                value=get_param('adx_thresh', 25)),
-        'use_side': st.sidebar.checkbox("Seitwärts-Filter (keine Trades)",
+        'use_side': st.sidebar.checkbox("Seitwärts-Filter (keine Trades bei low ADX)",
                                          value=get_param('use_side', False)),
     }
 
@@ -135,7 +142,7 @@ def main():
             line=dict(color='orange', width=2.5), name='Supertrend'
         ), row=1, col=1)
 
-    # Nur die letzten max_levels Linien zeichnen
+    # S/R-Linien (nur die letzten max_levels)
     for lvl in sup_levels[-params['max_levels']:]:
         fig.add_hline(y=lvl, line_dash="dash", line_color="lime", opacity=0.6)
     for lvl in res_levels[-params['max_levels']:]:
@@ -167,7 +174,7 @@ def main():
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # Signale
+    # Letzte Signale
     st.subheader("Letzte Signale & Begründung")
     recent_signals = data[data['reason'] != ""].tail(5)
     if recent_signals.empty:
@@ -178,14 +185,13 @@ def main():
             color = "green" if row['long_cond'] else "red"
             st.markdown(f"<span style='color:{color}'><b>{direction}</b></span> {row['timestamp'].strftime('%H:%M')} → {row['reason']}", unsafe_allow_html=True)
 
-    # --- Alle Trades anzeigen (komplette Tabelle) ---
-    st.subheader("Trade-Historie (alle Trades)")
+    # Alle Trades anzeigen
+    st.subheader("📋 Vollständige Trade-Historie")
     if not trades_df.empty:
         display_df = trades_df.copy()
         display_df['time'] = display_df['time'].dt.strftime('%Y-%m-%d %H:%M')
         display_df['profit_pct'] = display_df['profit_pct'].round(2).astype(str) + ' %'
         display_df['profit_usdt'] = display_df['profit_usdt'].round(2).astype(str) + ' USDT'
-        # Auswahl der Spalten für bessere Lesbarkeit
         st.dataframe(display_df[['type', 'time', 'price', 'profit_pct', 'profit_usdt']],
                      use_container_width=True, hide_index=True)
     else:
