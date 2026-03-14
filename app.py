@@ -35,27 +35,74 @@ def main():
     symbol = st.sidebar.selectbox("Symbol", symbols, index=0 if symbols else 0)
     live_mode = st.sidebar.checkbox("Live-Update alle 30 Sekunden", value=True)
 
-    # Parameter
-    st.sidebar.header("Strategie-Einstellungen")
-    params = {
-        'st_factor': st.sidebar.number_input("Supertrend Multiplier", 1.0, 6.0, 3.0, 0.1),
-        'st_period': st.sidebar.number_input("Supertrend Periode", 5, 30, 10, 1),
-        'use_st': st.sidebar.checkbox("Supertrend als Filter + Exit", True),
-        'left_bars': st.sidebar.number_input("Pivot Left Bars", 3, 20, 5),
-        'right_bars': st.sidebar.number_input("Pivot Right Bars", 3, 20, 5),
-        'max_levels': st.sidebar.number_input("Max. historische Levels", 3, 20, 8),
-        'zone_pct': st.sidebar.number_input("S/R-Zone Breite (%)", 0.1, 3.0, 0.6, 0.05),
-        'wick_mult': st.sidebar.number_input("Wick × Body", 1.0, 5.0, 2.0, 0.1),
-        'use_wick': st.sidebar.checkbox("Wick Rejection prüfen", True),
-        'use_bullish': st.sidebar.checkbox("Kerzenrichtung prüfen", True),
-        'vol_len': st.sidebar.number_input("Volumen-SMA Länge", 10, 60, 20),
-        'vol_mult': st.sidebar.number_input("Volumen-Multiplikator", 1.0, 3.0, 1.3, 0.1),
-        'use_vol': st.sidebar.checkbox("Hohes Volumen erforderlich", True),
-        'adx_len': st.sidebar.number_input("ADX Periode", 8, 25, 14),
-        'adx_thresh': st.sidebar.number_input("ADX < = Seitwärts", 15, 40, 25),
-        'use_side': st.sidebar.checkbox("Seitwärts-Filter (keine Trades)", False),
-    }
+    # app.py (Auszug der wichtigsten Änderungen)
 
+# ... (oben unverändert, bis zur Sidebar)
+
+# Parameter
+st.sidebar.header("Strategie-Einstellungen")
+
+# Prüfen, ob optimierte Parameter in der Session vorhanden sind
+if 'optimized_params' in st.session_state:
+    st.sidebar.success("Optimierte Parameter verfügbar!")
+    if st.sidebar.button("Optimierte Parameter übernehmen"):
+        # Setze die optimierten Parameter als Default für die Input-Felder
+        # Dazu müssen wir sie in die Session schreiben und Seite neuladen
+        st.session_state['use_optimized'] = True
+        st.rerun()
+
+# Funktion zum Holen eines Parameters mit Priorität: erst optimierte, dann User-Input
+def get_param(key, default):
+    if st.session_state.get('use_optimized', False) and key in st.session_state.get('optimized_params', {}):
+        return st.session_state['optimized_params'][key]
+    else:
+        return default
+
+# Jetzt die Input-Felder mit dynamischen Defaults
+params = {
+    'st_factor': st.sidebar.number_input("Supertrend Multiplier", 1.0, 6.0, 
+                                          value=get_param('st_factor', 3.0), step=0.1),
+    'st_period': st.sidebar.number_input("Supertrend Periode", 5, 30, 
+                                          value=get_param('st_period', 10), step=1),
+    'use_st': st.sidebar.checkbox("Supertrend als Filter + Exit", 
+                                   value=get_param('use_st', True)),
+    'left_bars': st.sidebar.number_input("Pivot Left Bars", 3, 20, 
+                                          value=get_param('left_bars', 5)),
+    'right_bars': st.sidebar.number_input("Pivot Right Bars", 3, 20, 
+                                           value=get_param('right_bars', 5)),
+    'max_levels': st.sidebar.number_input("Max. historische Levels", 3, 20, 
+                                           value=get_param('max_levels', 8)),
+    'zone_pct': st.sidebar.number_input("S/R-Zone Breite (%)", 0.1, 3.0, 
+                                         value=get_param('zone_pct', 0.6), step=0.05),
+    'wick_mult': st.sidebar.number_input("Wick × Body", 1.0, 5.0, 
+                                          value=get_param('wick_mult', 2.0), step=0.1),
+    'use_wick': st.sidebar.checkbox("Wick Rejection prüfen", 
+                                     value=get_param('use_wick', True)),
+    'use_bullish': st.sidebar.checkbox("Kerzenrichtung prüfen", 
+                                        value=get_param('use_bullish', True)),
+    'vol_len': st.sidebar.number_input("Volumen-SMA Länge", 10, 60, 
+                                        value=get_param('vol_len', 20)),
+    'vol_mult': st.sidebar.number_input("Volumen-Multiplikator", 1.0, 3.0, 
+                                         value=get_param('vol_mult', 1.3), step=0.1),
+    'use_vol': st.sidebar.checkbox("Hohes Volumen erforderlich", 
+                                    value=get_param('use_vol', True)),
+    'adx_len': st.sidebar.number_input("ADX Periode", 8, 25, 
+                                        value=get_param('adx_len', 14)),
+    'adx_thresh': st.sidebar.number_input("ADX < = Seitwärts", 15, 40, 
+                                           value=get_param('adx_thresh', 25)),
+    'use_side': st.sidebar.checkbox("Seitwärts-Filter (keine Trades)", 
+                                     value=get_param('use_side', False)),
+}
+
+# Nachdem die Parameter gesetzt sind, setze use_optimized zurück, damit beim nächsten Lauf wieder die Sidebar-Werte gelten
+if st.session_state.get('use_optimized', False):
+    st.session_state['use_optimized'] = False
+
+# ... (Daten laden, Strategie berechnen)
+
+# Nach dem Backtest: Daten in Session speichern
+st.session_state['trades_df'] = trades_df
+st.session_state['data'] = data
     # Daten laden & Strategie ausführen
     df = fetch_bitget_data(symbol)
     data, st_col, sup_levels, res_levels = calculate_strategy(df, params)
