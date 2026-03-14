@@ -181,12 +181,14 @@ if st.button("Batch-Optimierung starten"):
 
                 # Übernehmen-Button
                 if st.button(f"Übernehmen #{i+1}", key=f"take_{i}"):
+                    # Alle relevanten Daten in die Session schreiben
                     st.session_state['optimized_symbol'] = res['symbol']
                     st.session_state['optimized_timeframe'] = res['timeframe']
                     st.session_state['optimized_limit'] = limit
                     st.session_state['optimized_params'] = res['params']
                     st.session_state['use_optimized'] = True
                     st.session_state['show_optimized_message'] = True
+                    # Zur Hauptseite wechseln
                     st.switch_page("app.py")
     else:
         st.warning("Keine Ergebnisse – bitte Einstellungen prüfen.")
