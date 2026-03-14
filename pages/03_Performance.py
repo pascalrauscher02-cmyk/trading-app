@@ -1,4 +1,4 @@
-# pages/03_Performance.py (vollständig)
+# pages/03_Performance.py
 
 import streamlit as st
 import pandas as pd
@@ -12,7 +12,6 @@ if 'authenticated' not in st.session_state or not st.session_state.authenticated
 
 st.title("📊 Detaillierte Performance")
 
-# Prüfen, ob Trades in der Session vorhanden sind
 if 'trades_df' not in st.session_state or st.session_state['trades_df'].empty:
     st.info("Noch keine Trades vorhanden. Führe zuerst einen Backtest auf der Hauptseite aus.")
     st.stop()
@@ -26,14 +25,15 @@ display_df['time'] = display_df['time'].dt.strftime('%Y-%m-%d %H:%M')
 display_df['profit_pct'] = display_df['profit_pct'].round(2)
 st.dataframe(display_df, use_container_width=True)
 
-# Kennzahlen
 closed = trades_df[trades_df['type'].str.contains('Exit')]
 if not closed.empty:
     total_profit = closed['profit_pct'].sum()
     win_rate = (closed['profit_pct'] > 0).mean() * 100
     avg_win = closed[closed['profit_pct'] > 0]['profit_pct'].mean() if any(closed['profit_pct'] > 0) else 0
     avg_loss = closed[closed['profit_pct'] < 0]['profit_pct'].mean() if any(closed['profit_pct'] < 0) else 0
-    profit_factor = abs(closed[closed['profit_pct'] > 0]['profit_pct'].sum() / closed[closed['profit_pct'] < 0]['profit_pct'].sum()) if any(closed['profit_pct'] < 0) else float('inf')
+    gains = closed[closed['profit_pct'] > 0]['profit_pct'].sum()
+    losses = abs(closed[closed['profit_pct'] < 0]['profit_pct'].sum())
+    profit_factor = gains / losses if losses != 0 else float('inf')
 
     col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("Gesamtprofit %", f"{total_profit:.2f}")
@@ -42,7 +42,6 @@ if not closed.empty:
     col4.metric("Ø Verlust", f"{avg_loss:.2f}%" if avg_loss else "-")
     col5.metric("Profit Factor", f"{profit_factor:.2f}")
 
-# Equity-Kurve
 if data is not None and not trades_df.empty:
     closed = trades_df[trades_df['type'].str.contains('Exit')].copy()
     closed = closed.sort_values('time')
