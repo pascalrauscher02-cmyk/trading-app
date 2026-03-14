@@ -43,7 +43,13 @@ def calculate_strategy(df, params):
 
     data = df.copy()
 
-    # --- Supertrend (robust) ---
+    # --- ATR (für S/R-Zonen) ---
+    try:
+        data['atr'] = ta.atr(data['high'], data['low'], data['close'], length=params['atr_period'])
+    except:
+        data['atr'] = 0.0  # Fallback
+
+    # --- Supertrend ---
     st_col = None
     if len(data) >= params['st_period'] and params['use_st']:
         try:
@@ -58,15 +64,12 @@ def calculate_strategy(df, params):
                     data['bullish_trend'] = data[dir_col] < 0
                     data['bearish_trend'] = data[dir_col] > 0
                 else:
-                    st.warning(f"Supertrend-Spalten nicht gefunden. Vorhandene Spalten: {st_df.columns.tolist()}")
                     data['bullish_trend'] = False
                     data['bearish_trend'] = False
             else:
-                st.warning("Supertrend-DataFrame ist leer.")
                 data['bullish_trend'] = False
                 data['bearish_trend'] = False
         except Exception as e:
-            st.warning(f"Supertrend konnte nicht berechnet werden: {e}")
             data['bullish_trend'] = False
             data['bearish_trend'] = False
     else:
@@ -101,46 +104,62 @@ def calculate_strategy(df, params):
     data['upper_rejection'] = data['upper_wick'] > (data['body'] * params['wick_mult'])
     data['is_bullish_candle'] = data['close'] > data['open']
 
-    # --- Support / Resistance (Zone als % vom Preis) ---
-    sup_levels = []
-    res_levels = []
+    # --- Dynamische S/R Level (Pivot-basiert) ---
+    sup_levels = []      # Liste der aktuellen Support-Level (Preise)
+    res_levels = []      # Liste der aktuellen Resistance-Level (Preise)
+    sup_indices = []     # Bar-Index, an dem das Level erstellt wurde (für FIFO)
+    res_indices = []
+
     window = params['left_bars'] + params['right_bars'] + 1
-    # Rolling ohne center, um NaN am Anfang zu vermeiden
+    # Pivot-Low: Tiefstpreis im Fenster
     data['pivot_low'] = data['low'] == data['low'].rolling(window=window, center=False).min()
     data['pivot_high'] = data['high'] == data['high'].rolling(window=window, center=False).max()
     data['pivot_low'] = data['pivot_low'].fillna(False)
     data['pivot_high'] = data['pivot_high'].fillna(False)
 
-    # Sammle Levels (nur die letzten max_levels)
+    # Arrays für vektorisierte Näheprüfung vorbereiten
+    near_support = np.zeros(len(data), dtype=bool)
+    near_resistance = np.zeros(len(data), dtype=bool)
+
+    # Wir durchlaufen die Daten, um Level zu sammeln und gleichzeitig die Nähe zu prüfen
+    # (geht nicht vollständig vektorisiert, aber die Schleife ist nur über die Anzahl der Level, nicht über alle Zeilen)
     for i in range(len(data)):
+        # Neues Pivot? (Indizierung: Pivot wird am Bar i-rightBars erkannt)
         if i >= params['right_bars']:
             idx = i - params['right_bars']
             if data['pivot_low'].iloc[idx]:
                 sup_levels.append(data['low'].iloc[idx])
+                sup_indices.append(idx)
+                # maxLevels begrenzen (FIFO)
                 if len(sup_levels) > params['max_levels']:
                     sup_levels.pop(0)
+                    sup_indices.pop(0)
             if data['pivot_high'].iloc[idx]:
                 res_levels.append(data['high'].iloc[idx])
+                res_indices.append(idx)
                 if len(res_levels) > params['max_levels']:
                     res_levels.pop(0)
+                    res_indices.pop(0)
 
-    # Vektorisierte Prüfung auf Nähe zu Support/Resistance
-    zone_pct = params['zone_pct'] / 100
-    if sup_levels:
-        sup_array = np.array(sup_levels[-params['max_levels']:])
-        dist_to_sup = np.min(np.abs(data['low'].values[:, None] - sup_array), axis=1)
-        data['near_support'] = dist_to_sup <= (data['close'] * zone_pct)
-    else:
-        data['near_support'] = False
+        # Für den aktuellen Bar prüfen wir die Nähe zu den aktuellen Levels
+        # Zone = ATR * zone_atr_mult
+        zone = data['atr'].iloc[i] * params['zone_atr_mult']
+        if sup_levels:
+            # Prüfe, ob low innerhalb der Zone eines Supports liegt
+            for lvl in sup_levels:
+                if abs(data['low'].iloc[i] - lvl) <= zone:
+                    near_support[i] = True
+                    break
+        if res_levels:
+            for lvl in res_levels:
+                if abs(data['high'].iloc[i] - lvl) <= zone:
+                    near_resistance[i] = True
+                    break
 
-    if res_levels:
-        res_array = np.array(res_levels[-params['max_levels']:])
-        dist_to_res = np.min(np.abs(data['high'].values[:, None] - res_array), axis=1)
-        data['near_resistance'] = dist_to_res <= (data['close'] * zone_pct)
-    else:
-        data['near_resistance'] = False
+    data['near_support'] = near_support
+    data['near_resistance'] = near_resistance
 
-    # --- Entry-Bedingungen ---
+    # --- Entry-Bedingungen (wie in Pine Script) ---
     data['long_cond'] = (
         data['near_support'] &
         (~pd.Series(not params['use_wick'], index=data.index) | data['lower_rejection']) &
@@ -159,7 +178,7 @@ def calculate_strategy(df, params):
         (~pd.Series(not params['use_side'], index=data.index) | ~data['in_sideways'])
     )
 
-    # Begründung
+    # Begründung (optional)
     def get_reason(row, direction):
         reasons = []
         if direction == 'long':
@@ -169,7 +188,7 @@ def calculate_strategy(df, params):
             if row['is_bullish_candle'] and params['use_bullish']: reasons.append("bullische Kerze")
             if row['bullish_trend'] and params['use_st']: reasons.append("Supertrend ↑")
             if not row['in_sideways'] and params['use_side']: reasons.append("Trend vorhanden")
-        else:  # short
+        else:
             if row['near_resistance']: reasons.append("nahe Resistance")
             if row['upper_rejection'] and params['use_wick']: reasons.append("Wick Rejection")
             if row['high_volume'] and params['use_vol']: reasons.append("hohes Volumen")
@@ -185,12 +204,6 @@ def calculate_strategy(df, params):
     return data, st_col, sup_levels, res_levels
 
 def run_backtest(data, params, capital=1000, fee=0.001):
-    """
-    Führt Backtest aus.
-    - capital: Startkapital in USDT
-    - fee: Provision pro Trade (0,1% = 0.001) – wird bei Entry und Exit abgezogen
-    Gibt zurück: (total_profit_pct, total_profit_usdt, win_rate, num_trades, trades_df)
-    """
     required = ['long_cond', 'short_cond', 'bullish_trend', 'bearish_trend', 'timestamp', 'close']
     missing = [col for col in required if col not in data.columns]
 
@@ -207,10 +220,8 @@ def run_backtest(data, params, capital=1000, fee=0.001):
 
         # Exit
         if position == 1 and params['use_st'] and row['bearish_trend']:
-            # Long schließen
             exit_price = row['close']
             raw_return = (exit_price - entry_price) / entry_price
-            # Provision: 0.1% beim Einstieg + 0.1% beim Ausstieg
             net_return = raw_return - 2 * fee
             profit_usdt = balance * net_return
             balance += profit_usdt
@@ -219,9 +230,8 @@ def run_backtest(data, params, capital=1000, fee=0.001):
                            'profit_pct': profit_pct, 'profit_usdt': profit_usdt})
             position = 0
         elif position == -1 and params['use_st'] and row['bullish_trend']:
-            # Short schließen
             exit_price = row['close']
-            raw_return = (entry_price - exit_price) / entry_price  # bei Short: (Einstieg - Ausstieg)/Einstieg
+            raw_return = (entry_price - exit_price) / entry_price
             net_return = raw_return - 2 * fee
             profit_usdt = balance * net_return
             balance += profit_usdt
@@ -235,8 +245,6 @@ def run_backtest(data, params, capital=1000, fee=0.001):
             if row['long_cond']:
                 position = 1
                 entry_price = row['close']
-                # Beim Einstieg wird bereits die Provision (0.1%) abgezogen, aber das reduziert den Einsatz.
-                # Wir ziehen sie erst beim Exit ab, daher hier keine Änderung.
                 trades.append({'type': 'Enter Long', 'time': row['timestamp'], 'price': entry_price,
                                'profit_pct': 0, 'profit_usdt': 0})
             elif row['short_cond']:
