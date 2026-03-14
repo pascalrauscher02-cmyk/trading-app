@@ -47,7 +47,7 @@ def calculate_strategy(df, params):
     try:
         data['atr'] = ta.atr(data['high'], data['low'], data['close'], length=params['atr_period'])
     except:
-        data['atr'] = 0.0  # Fallback
+        data['atr'] = 0.0
 
     # --- Supertrend ---
     st_col = None
@@ -105,32 +105,27 @@ def calculate_strategy(df, params):
     data['is_bullish_candle'] = data['close'] > data['open']
 
     # --- Dynamische S/R Level (Pivot-basiert) ---
-    sup_levels = []      # Liste der aktuellen Support-Level (Preise)
-    res_levels = []      # Liste der aktuellen Resistance-Level (Preise)
-    sup_indices = []     # Bar-Index, an dem das Level erstellt wurde (für FIFO)
+    sup_levels = []
+    res_levels = []
+    sup_indices = []
     res_indices = []
 
     window = params['left_bars'] + params['right_bars'] + 1
-    # Pivot-Low: Tiefstpreis im Fenster
     data['pivot_low'] = data['low'] == data['low'].rolling(window=window, center=False).min()
     data['pivot_high'] = data['high'] == data['high'].rolling(window=window, center=False).max()
     data['pivot_low'] = data['pivot_low'].fillna(False)
     data['pivot_high'] = data['pivot_high'].fillna(False)
 
-    # Arrays für vektorisierte Näheprüfung vorbereiten
     near_support = np.zeros(len(data), dtype=bool)
     near_resistance = np.zeros(len(data), dtype=bool)
 
-    # Wir durchlaufen die Daten, um Level zu sammeln und gleichzeitig die Nähe zu prüfen
-    # (geht nicht vollständig vektorisiert, aber die Schleife ist nur über die Anzahl der Level, nicht über alle Zeilen)
     for i in range(len(data)):
-        # Neues Pivot? (Indizierung: Pivot wird am Bar i-rightBars erkannt)
+        # Neues Pivot?
         if i >= params['right_bars']:
             idx = i - params['right_bars']
             if data['pivot_low'].iloc[idx]:
                 sup_levels.append(data['low'].iloc[idx])
                 sup_indices.append(idx)
-                # maxLevels begrenzen (FIFO)
                 if len(sup_levels) > params['max_levels']:
                     sup_levels.pop(0)
                     sup_indices.pop(0)
@@ -141,11 +136,9 @@ def calculate_strategy(df, params):
                     res_levels.pop(0)
                     res_indices.pop(0)
 
-        # Für den aktuellen Bar prüfen wir die Nähe zu den aktuellen Levels
-        # Zone = ATR * zone_atr_mult
+        # Nähe zu aktuellen Levels prüfen
         zone = data['atr'].iloc[i] * params['zone_atr_mult']
         if sup_levels:
-            # Prüfe, ob low innerhalb der Zone eines Supports liegt
             for lvl in sup_levels:
                 if abs(data['low'].iloc[i] - lvl) <= zone:
                     near_support[i] = True
@@ -178,7 +171,7 @@ def calculate_strategy(df, params):
         (~pd.Series(not params['use_side'], index=data.index) | ~data['in_sideways'])
     )
 
-    # Begründung (optional)
+    # Begründung
     def get_reason(row, direction):
         reasons = []
         if direction == 'long':
@@ -204,7 +197,12 @@ def calculate_strategy(df, params):
     return data, st_col, sup_levels, res_levels
 
 def run_backtest(data, params, capital=1000, fee=0.001):
-    required = ['long_cond', 'short_cond', 'bullish_trend', 'bearish_trend', 'timestamp', 'close']
+    """
+    Führt Backtest aus mit Einstieg zum nächsten Open.
+    - capital: Startkapital in USDT
+    - fee: Provision pro Trade (0,1% = 0.001) – wird bei Entry und Exit abgezogen
+    """
+    required = ['long_cond', 'short_cond', 'bullish_trend', 'bearish_trend', 'timestamp', 'open', 'close']
     missing = [col for col in required if col not in data.columns]
 
     if missing:
@@ -214,13 +212,19 @@ def run_backtest(data, params, capital=1000, fee=0.001):
     entry_price = 0
     balance = capital
     trades = []
+    last_long_cond = False
+    last_short_cond = False
+    last_bearish_trend = False
+    last_bullish_trend = False
 
     for i in range(1, len(data)):
         row = data.iloc[i]
+        prev = data.iloc[i-1]
 
-        # Exit
-        if position == 1 and params['use_st'] and row['bearish_trend']:
-            exit_price = row['close']
+        # Exit basierend auf vorherigem Trend (Supertrend Flip)
+        if position == 1 and params['use_st'] and prev['bearish_trend'] and not last_bearish_trend:
+            # Exit zum Open der aktuellen Kerze
+            exit_price = row['open']
             raw_return = (exit_price - entry_price) / entry_price
             net_return = raw_return - 2 * fee
             profit_usdt = balance * net_return
@@ -229,8 +233,8 @@ def run_backtest(data, params, capital=1000, fee=0.001):
             trades.append({'type': 'Exit Long', 'time': row['timestamp'], 'price': exit_price,
                            'profit_pct': profit_pct, 'profit_usdt': profit_usdt})
             position = 0
-        elif position == -1 and params['use_st'] and row['bullish_trend']:
-            exit_price = row['close']
+        elif position == -1 and params['use_st'] and prev['bullish_trend'] and not last_bullish_trend:
+            exit_price = row['open']
             raw_return = (entry_price - exit_price) / entry_price
             net_return = raw_return - 2 * fee
             profit_usdt = balance * net_return
@@ -240,20 +244,26 @@ def run_backtest(data, params, capital=1000, fee=0.001):
                            'profit_pct': profit_pct, 'profit_usdt': profit_usdt})
             position = 0
 
-        # Entry
+        # Entry basierend auf vorherigen Konditionen (zum nächsten Open)
         if position == 0:
-            if row['long_cond']:
+            if prev['long_cond'] and not last_long_cond:
                 position = 1
-                entry_price = row['close']
+                entry_price = row['open']
                 trades.append({'type': 'Enter Long', 'time': row['timestamp'], 'price': entry_price,
                                'profit_pct': 0, 'profit_usdt': 0})
-            elif row['short_cond']:
+            elif prev['short_cond'] and not last_short_cond:
                 position = -1
-                entry_price = row['close']
+                entry_price = row['open']
                 trades.append({'type': 'Enter Short', 'time': row['timestamp'], 'price': entry_price,
                                'profit_pct': 0, 'profit_usdt': 0})
 
-    # Offener Trade am Ende
+        # Zustände für nächste Iteration merken
+        last_long_cond = prev['long_cond']
+        last_short_cond = prev['short_cond']
+        last_bearish_trend = prev['bearish_trend']
+        last_bullish_trend = prev['bullish_trend']
+
+    # Offenen Trade am Ende schließen (zum letzten Close, da kein nächster Open)
     if position != 0:
         last = data.iloc[-1]
         if position == 1:
