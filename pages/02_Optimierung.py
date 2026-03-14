@@ -18,7 +18,6 @@ Die besten 5 Ergebnisse (nach Bewertungsmetrik) werden unten in einer Tabelle an
 Mit dem Button **Übernehmen** gelangst du zurück zur Hauptseite, wo Symbol, Timeframe und die optimierten Parameter bereits eingestellt sind.
 """)
 
-# Auswahlmöglichkeiten
 all_symbols = get_top_30_symbols()
 selected_symbols = st.multiselect("Symbole", all_symbols, default=['BTC/USDT', 'ETH/USDT'])
 timeframes = ['1m', '5m', '15m', '30m', '1h', '4h', '1d']
@@ -44,7 +43,6 @@ fixed_params = {
 }
 
 def optimize_for(symbol, timeframe):
-    """Führt eine Optuna-Optimierung für ein (Symbol, Timeframe) durch und gibt bestes Ergebnis + Metriken zurück."""
     def objective(trial):
         params = fixed_params.copy()
         params.update({
@@ -55,22 +53,21 @@ def optimize_for(symbol, timeframe):
         })
         df = fetch_bitget_data(symbol, timeframe, limit)
         if df is None or df.empty:
-            return -9999  # schlechter Wert, wenn keine Daten
+            return -9999
         data, _, _, _ = calculate_strategy(df, params)
-        profit, winrate, num_trades, _ = run_backtest(data, params)
+        profit, _, winrate, num_trades, _ = run_backtest(data, params)  # profit in %, winrate in %
         # Kombinierte Metrik: Profit + Winrate/10
         return profit + winrate / 10
 
     study = optuna.create_study(direction='maximize')
     study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
     
-    # Metriken für die besten Parameter neu berechnen
     best_params = study.best_params
     params = fixed_params.copy()
     params.update(best_params)
     df = fetch_bitget_data(symbol, timeframe, limit)
     data, _, _, _ = calculate_strategy(df, params)
-    profit, winrate, num_trades, trades_df = run_backtest(data, params)
+    profit_pct, profit_usdt, winrate, num_trades, trades_df = run_backtest(data, params)
     
     # Profitfaktor berechnen
     if not trades_df.empty:
@@ -88,7 +85,7 @@ def optimize_for(symbol, timeframe):
         'symbol': symbol,
         'timeframe': timeframe,
         'best_value': study.best_value,
-        'profit': profit,
+        'profit_pct': profit_pct,
         'winrate': winrate,
         'num_trades': num_trades,
         'profit_factor': profit_factor,
@@ -122,20 +119,18 @@ if st.button("Batch-Optimierung starten"):
     status_text.text("Optimierung abgeschlossen!")
     
     if results:
-        # Nach best_value sortieren (absteigend) und Top 5 nehmen
         results.sort(key=lambda x: x['best_value'], reverse=True)
         top5 = results[:5]
         
         st.subheader("🏆 Top 5 Ergebnisse")
         
-        # Tabelle vorbereiten
         table_data = []
         for i, res in enumerate(top5):
             table_data.append({
                 'Rang': i+1,
                 'Symbol': res['symbol'],
                 'Timeframe': res['timeframe'],
-                'Profit %': f"{res['profit']:.2f}",
+                'Profit %': f"{res['profit_pct']:.2f}",
                 'Winrate %': f"{res['winrate']:.1f}",
                 'Trades': res['num_trades'],
                 'Profit Faktor': f"{res['profit_factor']:.2f}",
@@ -148,7 +143,6 @@ if st.button("Batch-Optimierung starten"):
         df_top = pd.DataFrame(table_data)
         st.dataframe(df_top, use_container_width=True, hide_index=True)
         
-        # Buttons zum Übernehmen
         st.subheader("Parameter übernehmen")
         st.markdown("Klicke auf **Übernehmen** für das gewünschte Ergebnis – du wirst zur Hauptseite weitergeleitet.")
         
@@ -157,16 +151,17 @@ if st.button("Batch-Optimierung starten"):
             col1.write(f"**#{i+1}**")
             col2.write(res['symbol'])
             col3.write(res['timeframe'])
-            col4.write(f"{res['profit']:.2f}%")
+            col4.write(f"{res['profit_pct']:.2f}%")
             col5.write(f"{res['winrate']:.1f}%")
             col6.write(f"{res['profit_factor']:.2f}")
             if col7.button(f"Übernehmen", key=f"btn_{i}"):
-                # Speichere alle relevanten Daten in der Session
+                # Alles in Session speichern
                 st.session_state['optimized_symbol'] = res['symbol']
                 st.session_state['optimized_timeframe'] = res['timeframe']
-                st.session_state['optimized_limit'] = limit  # gleiche Anzahl Kerzen
+                st.session_state['optimized_limit'] = limit
                 st.session_state['optimized_params'] = res['params']
                 st.session_state['use_optimized'] = True
+                st.session_state['show_optimized_message'] = True
                 st.switch_page("app.py")
     else:
         st.warning("Keine Ergebnisse – bitte Einstellungen prüfen.")
