@@ -29,7 +29,7 @@ st.dataframe(display_df[['type', 'time', 'price', 'profit_pct', 'profit_usdt']],
 closed = trades_df[trades_df['type'].str.contains('Exit')]
 if not closed.empty:
     total_profit_usdt = closed['profit_usdt'].sum()
-    total_profit_pct = (total_profit_usdt / 1000) * 100  # bezogen auf 1000 USDT Startkapital (falls konstant)
+    total_profit_pct = (total_profit_usdt / 1000) * 100
     win_rate = (closed['profit_pct'] > 0).mean() * 100
     avg_win = closed[closed['profit_pct'] > 0]['profit_pct'].mean() if any(closed['profit_pct'] > 0) else 0
     avg_loss = closed[closed['profit_pct'] < 0]['profit_pct'].mean() if any(closed['profit_pct'] < 0) else 0
