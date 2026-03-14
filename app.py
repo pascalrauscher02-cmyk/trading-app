@@ -27,6 +27,7 @@ st.set_page_config(page_title="S/R + Wick Rejection + Supertrend (ATR-basiert)",
 def main():
     st.title("📈 Dynamische S/R + Wick Rejection + Supertrend (ATR-basiert)")
 
+    # Hinweisbox nach Übernahme
     if st.session_state.get('show_optimized_message', False):
         col1, col2 = st.columns([0.9, 0.1])
         with col1:
@@ -39,19 +40,23 @@ def main():
     # Sidebar
     st.sidebar.header("Asset & Daten")
     symbols = get_top_30_symbols()
-    # Standard: gespeichertes Symbol oder erstes
-    default_symbol = st.session_state.get('optimized_symbol', symbols[0] if symbols else 'BTC/USDT')
-    # Falls das gespeicherte Symbol nicht mehr in der Liste ist (z.B. nach Update), Fallback
+    
+    # --- Symbol: Priorität: optimiertes Symbol, sonst erstes aus Liste ---
+    default_symbol = st.session_state.get('optimized_symbol', symbols[0])
     if default_symbol not in symbols:
         default_symbol = symbols[0]
-    symbol = st.sidebar.selectbox("Symbol", symbols, index=symbols.index(default_symbol))
+    symbol_index = symbols.index(default_symbol)
+    symbol = st.sidebar.selectbox("Symbol", symbols, index=symbol_index)
 
+    # --- Timeframe: Priorität: optimiertes Timeframe, sonst '15m' ---
     timeframes = ['1m', '5m', '15m', '30m', '1h', '4h', '1d']
     default_tf = st.session_state.get('optimized_timeframe', '15m')
     if default_tf not in timeframes:
         default_tf = '15m'
-    timeframe = st.sidebar.selectbox("Timeframe", timeframes, index=timeframes.index(default_tf))
+    tf_index = timeframes.index(default_tf)
+    timeframe = st.sidebar.selectbox("Timeframe", timeframes, index=tf_index)
 
+    # --- Limit: Priorität: optimiertes Limit, sonst 1500 ---
     default_limit = st.session_state.get('optimized_limit', 1500)
     limit = st.sidebar.slider("Anzahl Kerzen", min_value=500, max_value=5000, value=default_limit, step=100)
 
@@ -60,6 +65,8 @@ def main():
 
     # Strategie-Parameter
     st.sidebar.header("Strategie-Einstellungen")
+    
+    # Button zum Übernehmen der optimierten Parameter (falls vorhanden)
     if 'optimized_params' in st.session_state:
         st.sidebar.success("Optimierte Parameter verfügbar!")
         if st.sidebar.button("Optimierte Parameter übernehmen"):
@@ -114,12 +121,16 @@ def main():
                                          value=get_param('use_side', False)),
     }
 
+    # Nachdem die Parameter gesetzt wurden, setze use_optimized zurück
     if st.session_state.get('use_optimized', False):
         st.session_state['use_optimized'] = False
-        st.session_state['show_optimized_message'] = True
+        # Die Nachricht bleibt aber erhalten
 
     # Daten laden & Strategie berechnen
     df = fetch_bitget_data(symbol, timeframe, limit)
+    if df is None:
+        st.error("Keine Daten geladen. Bitte später erneut versuchen.")
+        return
     data, st_col, sup_levels, res_levels = calculate_strategy(df, params)
     profit_pct, profit_usdt, winrate, num_trades, trades_df = run_backtest(data, params, capital)
 
