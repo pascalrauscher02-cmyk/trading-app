@@ -5,18 +5,17 @@ import optuna
 import pandas as pd
 from utils import get_top_30_symbols, fetch_bitget_data, calculate_strategy, run_backtest
 
-st.set_page_config(page_title="Multi-Asset Optimierung", layout="wide")
+st.set_page_config(page_title="Multi-Asset Optimierung (ATR)", layout="wide")
 
 if 'authenticated' not in st.session_state or not st.session_state.authenticated:
     st.warning("Bitte zuerst auf der Hauptseite einloggen.")
     st.stop()
 
-st.title("🔧 Multi-Asset & Multi-Timeframe Optimierung")
+st.title("🔧 Multi-Asset & Multi-Timeframe Optimierung (ATR-basiert)")
 st.markdown("""
 Wähle mehrere Symbole und Timeframes aus. Für jede Kombination wird eine eigene Optimierung gestartet.  
 Die besten 5 Ergebnisse (nach Bewertungsmetrik) werden unten in einer Tabelle angezeigt.  
-Mit dem Button **Übernehmen** gelangst du zurück zur Hauptseite, wo Symbol, Timeframe und die optimierten Parameter bereits eingestellt sind.  
-Mit **Trades anzeigen** kannst du dir die komplette Trade-Liste für das jeweilige Ergebnis ansehen.
+Mit **Übernehmen** gelangst du zurück zur Hauptseite, wo Symbol, Timeframe und die optimierten Parameter bereits eingestellt sind.
 """)
 
 all_symbols = get_top_30_symbols()
@@ -27,35 +26,47 @@ selected_timeframes = st.multiselect("Timeframes", timeframes, default=['15m', '
 limit = st.slider("Anzahl Kerzen pro Backtest", 500, 5000, 1500, 100)
 n_trials = st.number_input("Optimierungsdurchläufe pro Kombination", 10, 200, 30, 10)
 
+# Feste Parameter (werden nicht optimiert)
 fixed_params = {
     'left_bars': 5,
-    'right_bars': 5,
-    'max_levels': 8,
+    'right_bars': 6,
+    'max_levels': 4,
     'use_st': True,
     'use_wick': True,
-    'use_bullish': True,
-    'vol_len': 20,
-    'vol_mult': 1.3,
+    'use_bullish': False,
     'use_vol': True,
-    'adx_len': 14,
-    'adx_thresh': 25,
     'use_side': False,
+    # Diese Werte werden von der Optimierung überschrieben, aber hier als Default
+    'st_factor': 10.0,
+    'st_period': 8,
+    'atr_period': 8,
+    'zone_atr_mult': 0.4,
+    'wick_mult': 6.0,
+    'vol_len': 15,
+    'vol_mult': 1.3,
+    'adx_len': 9,
+    'adx_thresh': 25,
 }
 
 def optimize_for(symbol, timeframe):
     def objective(trial):
         params = fixed_params.copy()
         params.update({
-            'st_factor': trial.suggest_float('st_factor', 1.5, 5.0, step=0.1),
+            'st_factor': trial.suggest_float('st_factor', 5.0, 20.0, step=0.5),
             'st_period': trial.suggest_int('st_period', 5, 20),
-            'zone_pct': trial.suggest_float('zone_pct', 0.2, 2.0, step=0.1),
-            'wick_mult': trial.suggest_float('wick_mult', 1.2, 4.0, step=0.1),
+            'atr_period': trial.suggest_int('atr_period', 5, 20),
+            'zone_atr_mult': trial.suggest_float('zone_atr_mult', 0.2, 2.0, step=0.1),
+            'wick_mult': trial.suggest_float('wick_mult', 2.0, 10.0, step=0.5),
+            'vol_len': trial.suggest_int('vol_len', 10, 30),
+            'vol_mult': trial.suggest_float('vol_mult', 1.0, 2.5, step=0.1),
+            'adx_len': trial.suggest_int('adx_len', 7, 20),
+            'adx_thresh': trial.suggest_int('adx_thresh', 20, 35),
         })
         df = fetch_bitget_data(symbol, timeframe, limit)
         if df is None or df.empty:
             return -9999
         data, _, _, _ = calculate_strategy(df, params)
-        profit_pct, _, winrate, _, _ = run_backtest(data, params)  # profit_pct in %
+        profit_pct, _, winrate, _, _ = run_backtest(data, params)
         return profit_pct + winrate / 10
 
     study = optuna.create_study(direction='maximize')
@@ -90,7 +101,7 @@ def optimize_for(symbol, timeframe):
         'num_trades': num_trades,
         'profit_factor': profit_factor,
         'params': best_params,
-        'trades_df': trades_df  # speichern für spätere Anzeige
+        'trades_df': trades_df
     }
 
 if st.button("Batch-Optimierung starten"):
@@ -125,7 +136,7 @@ if st.button("Batch-Optimierung starten"):
 
         st.subheader("🏆 Top 5 Ergebnisse")
 
-        # Tabelle der Top 5
+        # Tabelle
         table_data = []
         for i, res in enumerate(top5):
             table_data.append({
@@ -136,10 +147,7 @@ if st.button("Batch-Optimierung starten"):
                 'Winrate %': f"{res['winrate']:.1f}",
                 'Trades': res['num_trades'],
                 'Profit Faktor': f"{res['profit_factor']:.2f}",
-                'st_factor': res['params']['st_factor'],
-                'st_period': res['params']['st_period'],
-                'zone_pct': res['params']['zone_pct'],
-                'wick_mult': res['params']['wick_mult'],
+                **res['params']
             })
         df_top = pd.DataFrame(table_data)
         st.dataframe(df_top, use_container_width=True, hide_index=True)
