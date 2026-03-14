@@ -28,36 +28,44 @@ st.set_page_config(page_title="S/R + Wick Rejection + Supertrend", layout="wide"
 def main():
     st.title("S/R + Wick Rejection + Supertrend (ohne ATR)")
 
+    # Hinweisbox nach Übernahme aus Optimierung (mit Schließen-Button)
+    if st.session_state.get('show_optimized_message', False):
+        col1, col2 = st.columns([0.9, 0.1])
+        with col1:
+            st.success("✅ Optimierte Parameter wurden übernommen!")
+        with col2:
+            if st.button("✖", key="close_msg"):
+                st.session_state['show_optimized_message'] = False
+                st.rerun()
+
     # Sidebar – Asset, Timeframe, Live-Modus
     st.sidebar.header("Asset & Daten")
     symbols = get_top_30_symbols()
     
-    # Prüfen, ob ein optimiertes Symbol in der Session steht
     default_symbol = st.session_state.get('optimized_symbol', symbols[0] if symbols else 'BTC/USDT')
     symbol = st.sidebar.selectbox("Symbol", symbols, index=symbols.index(default_symbol) if default_symbol in symbols else 0)
     
-    # Timeframes zur Auswahl
     timeframes = ['1m', '5m', '15m', '30m', '1h', '4h', '1d']
     default_tf = st.session_state.get('optimized_timeframe', '15m')
     timeframe = st.sidebar.selectbox("Timeframe", timeframes, index=timeframes.index(default_tf) if default_tf in timeframes else 2)
     
-    # Anzahl Kerzen (je höher, desto mehr Historie)
     default_limit = st.session_state.get('optimized_limit', 1500)
     limit = st.sidebar.slider("Anzahl Kerzen", min_value=500, max_value=5000, value=default_limit, step=100)
+    
+    # Handelskapital
+    capital = st.sidebar.number_input("Handelskapital (USDT)", min_value=100, max_value=1000000, value=1000, step=100)
     
     live_mode = st.sidebar.checkbox("Live-Update alle 30 Sekunden", value=True)
 
     # Parameter
     st.sidebar.header("Strategie-Einstellungen")
 
-    # Prüfen, ob optimierte Parameter in der Session vorhanden sind
     if 'optimized_params' in st.session_state:
         st.sidebar.success("Optimierte Parameter verfügbar!")
         if st.sidebar.button("Optimierte Parameter übernehmen"):
             st.session_state['use_optimized'] = True
             st.rerun()
 
-    # Funktion zum Holen eines Parameters mit Priorität: erst optimierte, dann User-Input
     def get_param(key, default):
         if st.session_state.get('use_optimized', False) and key in st.session_state.get('optimized_params', {}):
             return st.session_state['optimized_params'][key]
@@ -99,28 +107,30 @@ def main():
                                          value=get_param('use_side', False)),
     }
 
-    # Nachdem die Parameter gesetzt sind, setze use_optimized zurück
+    # Flag zurücksetzen, nachdem Parameter gesetzt wurden
     if st.session_state.get('use_optimized', False):
         st.session_state['use_optimized'] = False
+        st.session_state['show_optimized_message'] = True
 
     # Daten laden & Strategie ausführen
     df = fetch_bitget_data(symbol, timeframe, limit)
     data, st_col, sup_levels, res_levels = calculate_strategy(df, params)
 
-    profit, winrate, num_trades, trades_df = run_backtest(data, params)
+    profit_pct, profit_usdt, winrate, num_trades, trades_df = run_backtest(data, params, capital)
 
     # Daten in Session speichern für Performance-Seite
     st.session_state['trades_df'] = trades_df
     st.session_state['data'] = data
 
     # Metriken
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Gesamtprofit %", f"{profit:.2f}%")
-    col2.metric("Win-Rate", f"{winrate:.1f}%")
-    col3.metric("Anzahl Trades", num_trades)
-    col4.metric("Aktuelles Symbol", f"{symbol} ({timeframe})")
+    col1, col2, col3, col4, col5 = st.columns(5)
+    col1.metric("Gesamtprofit %", f"{profit_pct:.2f}%")
+    col2.metric("Gesamtprofit (USDT)", f"{profit_usdt:.2f} USDT")
+    col3.metric("Win-Rate", f"{winrate:.1f}%")
+    col4.metric("Anzahl Trades", num_trades)
+    col5.metric("Aktuelles Symbol", f"{symbol} ({timeframe})")
 
-    # Chart (wie gehabt, nur mit angepasstem Titel)
+    # Chart
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.75, 0.25])
     fig.add_trace(go.Candlestick(
         x=data['timestamp'], open=data['open'], high=data['high'],
@@ -133,9 +143,10 @@ def main():
             line=dict(color='orange', width=2.5), name='Supertrend'
         ), row=1, col=1)
 
-    for lvl in sup_levels:
+    # Nur die letzten max_levels Linien zeichnen (um Überladung zu vermeiden)
+    for lvl in sup_levels[-params['max_levels']:]:
         fig.add_hline(y=lvl, line_dash="dash", line_color="lime", opacity=0.6)
-    for lvl in res_levels:
+    for lvl in res_levels[-params['max_levels']:]:
         fig.add_hline(y=lvl, line_dash="dash", line_color="red", opacity=0.6)
 
     longs = data[data['long_cond']]
@@ -181,11 +192,13 @@ def main():
         display_df = trades_df.tail(15).copy()
         display_df['time'] = display_df['time'].dt.strftime('%Y-%m-%d %H:%M')
         display_df['profit_pct'] = display_df['profit_pct'].round(2).astype(str) + ' %'
-        st.dataframe(display_df, use_container_width=True, hide_index=True)
+        display_df['profit_usdt'] = display_df['profit_usdt'].round(2).astype(str) + ' USDT'
+        st.dataframe(display_df[['type', 'time', 'price', 'profit_pct', 'profit_usdt']], 
+                     use_container_width=True, hide_index=True)
     else:
         st.info("Noch keine Trades.")
 
-    # Live-Refresh mit Countdown
+    # Live-Refresh
     if live_mode:
         placeholder = st.empty()
         for seconds in range(30, 0, -1):
