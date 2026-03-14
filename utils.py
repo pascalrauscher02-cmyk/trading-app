@@ -43,16 +43,15 @@ def calculate_strategy(df, params):
 
     data = df.copy()
 
-    # --- Supertrend (robust mit Debug) ---
+    # --- Supertrend (robust) ---
     st_col = None
     if len(data) >= params['st_period'] and params['use_st']:
         try:
             st_df = data.ta.supertrend(period=params['st_period'], multiplier=params['st_factor'])
             if st_df is not None and not st_df.empty:
-                # Spaltennamen zur Diagnose (auskommentiert)
-                # st.write("Supertrend Spalten:", st_df.columns.tolist())
-                trend_cols = [c for c in st_df.columns if 'SUPERT_' in c and not c.endswith('d_')]
-                dir_cols = [c for c in st_df.columns if c.endswith('d_')]
+                # Korrekte Spaltensuche: mit startswith
+                trend_cols = [c for c in st_df.columns if c.startswith('SUPERT_')]
+                dir_cols = [c for c in st_df.columns if c.startswith('SUPERTd_')]
                 if trend_cols and dir_cols:
                     st_col = trend_cols[0]
                     dir_col = dir_cols[0]
