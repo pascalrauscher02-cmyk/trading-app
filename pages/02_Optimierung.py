@@ -60,8 +60,10 @@ if st.button("Optimierung starten"):
     st.json(study.best_params)
     st.write(f"Bester Zielwert (Profit + Winrate/10): {study.best_value:.2f}")
 
-    # Button zum Übernehmen der besten Parameter in die Hauptsession
-    if st.button("Diese Parameter in der Hauptseite verwenden"):
-        # Speichere die Parameter in st.session_state, damit Hauptseite sie nutzen kann
-        st.session_state['optimized_params'] = study.best_params
-        st.success("Parameter wurden gespeichert. Gehe zurück zur Hauptseite und lade sie dort.")
+    # Parameter in Session speichern
+    st.session_state['optimized_params'] = study.best_params
+
+    # Button zum direkten Übernehmen
+    if st.button("Diese Parameter jetzt in der Hauptseite verwenden"):
+        st.session_state['use_optimized'] = True
+        st.switch_page("app.py")  # Zur Hauptseite wechseln
