@@ -49,7 +49,6 @@ def calculate_strategy(df, params):
         try:
             st_df = data.ta.supertrend(period=params['st_period'], multiplier=params['st_factor'])
             if st_df is not None and not st_df.empty:
-                # Korrekte Spaltensuche: mit startswith
                 trend_cols = [c for c in st_df.columns if c.startswith('SUPERT_')]
                 dir_cols = [c for c in st_df.columns if c.startswith('SUPERTd_')]
                 if trend_cols and dir_cols:
@@ -106,10 +105,9 @@ def calculate_strategy(df, params):
     sup_levels = []
     res_levels = []
     window = params['left_bars'] + params['right_bars'] + 1
-    # Rolling-Minimum ohne center – dann werden die ersten window-1 Zeilen zu NaN, aber das ist okay
+    # Rolling ohne center, um NaN am Anfang zu vermeiden
     data['pivot_low'] = data['low'] == data['low'].rolling(window=window, center=False).min()
     data['pivot_high'] = data['high'] == data['high'].rolling(window=window, center=False).max()
-    # NaN durch False ersetzen
     data['pivot_low'] = data['pivot_low'].fillna(False)
     data['pivot_high'] = data['pivot_high'].fillna(False)
 
@@ -130,7 +128,6 @@ def calculate_strategy(df, params):
     zone_pct = params['zone_pct'] / 100
     if sup_levels:
         sup_array = np.array(sup_levels[-params['max_levels']:])
-        # Für jede Zeile minimale Distanz zu allen Support-Leveln
         dist_to_sup = np.min(np.abs(data['low'].values[:, None] - sup_array), axis=1)
         data['near_support'] = dist_to_sup <= (data['close'] * zone_pct)
     else:
@@ -187,15 +184,22 @@ def calculate_strategy(df, params):
 
     return data, st_col, sup_levels, res_levels
 
-def run_backtest(data, params):
+def run_backtest(data, params, capital=1000, fee=0.001):
+    """
+    Führt Backtest aus.
+    - capital: Startkapital in USDT
+    - fee: Provision pro Trade (0,1% = 0.001) – wird bei Entry und Exit abgezogen
+    Gibt zurück: (total_profit_pct, total_profit_usdt, win_rate, num_trades, trades_df)
+    """
     required = ['long_cond', 'short_cond', 'bullish_trend', 'bearish_trend', 'timestamp', 'close']
     missing = [col for col in required if col not in data.columns]
 
     if missing:
-        return 0.0, 0.0, 0, pd.DataFrame(columns=['type', 'time', 'price', 'profit_pct'])
+        return 0.0, 0.0, 0.0, 0, pd.DataFrame(columns=['type', 'time', 'price', 'profit_pct', 'profit_usdt'])
 
-    position = 0
+    position = 0  # 1 = long, -1 = short
     entry_price = 0
+    balance = capital
     trades = []
 
     for i in range(1, len(data)):
@@ -203,12 +207,27 @@ def run_backtest(data, params):
 
         # Exit
         if position == 1 and params['use_st'] and row['bearish_trend']:
-            profit = (row['close'] - entry_price) / entry_price * 100
-            trades.append({'type': 'Exit Long', 'time': row['timestamp'], 'price': row['close'], 'profit_pct': profit})
+            # Long schließen
+            exit_price = row['close']
+            raw_return = (exit_price - entry_price) / entry_price
+            # Provision: 0.1% beim Einstieg + 0.1% beim Ausstieg
+            net_return = raw_return - 2 * fee
+            profit_usdt = balance * net_return
+            balance += profit_usdt
+            profit_pct = net_return * 100
+            trades.append({'type': 'Exit Long', 'time': row['timestamp'], 'price': exit_price,
+                           'profit_pct': profit_pct, 'profit_usdt': profit_usdt})
             position = 0
         elif position == -1 and params['use_st'] and row['bullish_trend']:
-            profit = (entry_price - row['close']) / entry_price * 100
-            trades.append({'type': 'Exit Short', 'time': row['timestamp'], 'price': row['close'], 'profit_pct': profit})
+            # Short schließen
+            exit_price = row['close']
+            raw_return = (entry_price - exit_price) / entry_price  # bei Short: (Einstieg - Ausstieg)/Einstieg
+            net_return = raw_return - 2 * fee
+            profit_usdt = balance * net_return
+            balance += profit_usdt
+            profit_pct = net_return * 100
+            trades.append({'type': 'Exit Short', 'time': row['timestamp'], 'price': exit_price,
+                           'profit_pct': profit_pct, 'profit_usdt': profit_usdt})
             position = 0
 
         # Entry
@@ -216,29 +235,44 @@ def run_backtest(data, params):
             if row['long_cond']:
                 position = 1
                 entry_price = row['close']
-                trades.append({'type': 'Enter Long', 'time': row['timestamp'], 'price': entry_price, 'profit_pct': 0})
+                # Beim Einstieg wird bereits die Provision (0.1%) abgezogen, aber das reduziert den Einsatz.
+                # Wir ziehen sie erst beim Exit ab, daher hier keine Änderung.
+                trades.append({'type': 'Enter Long', 'time': row['timestamp'], 'price': entry_price,
+                               'profit_pct': 0, 'profit_usdt': 0})
             elif row['short_cond']:
                 position = -1
                 entry_price = row['close']
-                trades.append({'type': 'Enter Short', 'time': row['timestamp'], 'price': entry_price, 'profit_pct': 0})
+                trades.append({'type': 'Enter Short', 'time': row['timestamp'], 'price': entry_price,
+                               'profit_pct': 0, 'profit_usdt': 0})
 
     # Offener Trade am Ende
     if position != 0:
         last = data.iloc[-1]
         if position == 1:
-            profit = (last['close'] - entry_price) / entry_price * 100
-            trades.append({'type': 'Exit Long (Ende)', 'time': last['timestamp'], 'price': last['close'], 'profit_pct': profit})
+            exit_price = last['close']
+            raw_return = (exit_price - entry_price) / entry_price
+            net_return = raw_return - 2 * fee
+            profit_usdt = balance * net_return
+            profit_pct = net_return * 100
+            trades.append({'type': 'Exit Long (Ende)', 'time': last['timestamp'], 'price': exit_price,
+                           'profit_pct': profit_pct, 'profit_usdt': profit_usdt})
         else:
-            profit = (entry_price - last['close']) / entry_price * 100
-            trades.append({'type': 'Exit Short (Ende)', 'time': last['timestamp'], 'price': last['close'], 'profit_pct': profit})
+            exit_price = last['close']
+            raw_return = (entry_price - exit_price) / entry_price
+            net_return = raw_return - 2 * fee
+            profit_usdt = balance * net_return
+            profit_pct = net_return * 100
+            trades.append({'type': 'Exit Short (Ende)', 'time': last['timestamp'], 'price': exit_price,
+                           'profit_pct': profit_pct, 'profit_usdt': profit_usdt})
 
     trades_df = pd.DataFrame(trades)
     if trades_df.empty:
-        return 0.0, 0.0, 0, trades_df
+        return 0.0, 0.0, 0.0, 0, trades_df
 
     closed = trades_df[trades_df['type'].str.contains('Exit')]
-    total_profit = closed['profit_pct'].sum()
+    total_profit_usdt = closed['profit_usdt'].sum()
+    total_profit_pct = (balance - capital) / capital * 100
     win_rate = (closed['profit_pct'] > 0).mean() * 100 if not closed.empty else 0.0
     num_trades = len(closed)
 
-    return total_profit, win_rate, num_trades, trades_df
+    return total_profit_pct, total_profit_usdt, win_rate, num_trades, trades_df
