@@ -23,17 +23,17 @@ def get_top_30_symbols():
         ]
 
 @st.cache_data(ttl=30)
-def fetch_bitget_data(symbol='BTC/USDT', limit=1500):
+def fetch_bitget_data(symbol='BTC/USDT', timeframe='15m', limit=1500):
     try:
         exchange = ccxt.bitget()
-        ohlcv = exchange.fetch_ohlcv(symbol, timeframe='15m', limit=limit)
+        ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
         if not ohlcv:
             return None
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
         return df
     except Exception as e:
-        st.error(f"Daten-Ladefehler für {symbol}: {e}")
+        st.error(f"Daten-Ladefehler für {symbol} ({timeframe}): {e}")
         return None
 
 def calculate_strategy(df, params):
