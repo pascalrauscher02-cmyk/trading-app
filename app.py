@@ -28,10 +28,23 @@ st.set_page_config(page_title="S/R + Wick Rejection + Supertrend", layout="wide"
 def main():
     st.title("S/R + Wick Rejection + Supertrend (ohne ATR)")
 
-    # Sidebar – Assets & Live
-    st.sidebar.header("Asset & Live-Modus")
+    # Sidebar – Asset, Timeframe, Live-Modus
+    st.sidebar.header("Asset & Daten")
     symbols = get_top_30_symbols()
-    symbol = st.sidebar.selectbox("Symbol", symbols, index=0 if symbols else 0)
+    
+    # Prüfen, ob ein optimiertes Symbol in der Session steht
+    default_symbol = st.session_state.get('optimized_symbol', symbols[0] if symbols else 'BTC/USDT')
+    symbol = st.sidebar.selectbox("Symbol", symbols, index=symbols.index(default_symbol) if default_symbol in symbols else 0)
+    
+    # Timeframes zur Auswahl
+    timeframes = ['1m', '5m', '15m', '30m', '1h', '4h', '1d']
+    default_tf = st.session_state.get('optimized_timeframe', '15m')
+    timeframe = st.sidebar.selectbox("Timeframe", timeframes, index=timeframes.index(default_tf) if default_tf in timeframes else 2)
+    
+    # Anzahl Kerzen (je höher, desto mehr Historie)
+    default_limit = st.session_state.get('optimized_limit', 1500)
+    limit = st.sidebar.slider("Anzahl Kerzen", min_value=500, max_value=5000, value=default_limit, step=100)
+    
     live_mode = st.sidebar.checkbox("Live-Update alle 30 Sekunden", value=True)
 
     # Parameter
@@ -51,7 +64,6 @@ def main():
         else:
             return default
 
-    # Input-Felder mit dynamischen Defaults
     params = {
         'st_factor': st.sidebar.number_input("Supertrend Multiplier", 1.0, 6.0,
                                               value=get_param('st_factor', 3.0), step=0.1),
@@ -92,7 +104,7 @@ def main():
         st.session_state['use_optimized'] = False
 
     # Daten laden & Strategie ausführen
-    df = fetch_bitget_data(symbol)
+    df = fetch_bitget_data(symbol, timeframe, limit)
     data, st_col, sup_levels, res_levels = calculate_strategy(df, params)
 
     profit, winrate, num_trades, trades_df = run_backtest(data, params)
@@ -106,11 +118,10 @@ def main():
     col1.metric("Gesamtprofit %", f"{profit:.2f}%")
     col2.metric("Win-Rate", f"{winrate:.1f}%")
     col3.metric("Anzahl Trades", num_trades)
-    col4.metric("Aktuelles Symbol", symbol)
+    col4.metric("Aktuelles Symbol", f"{symbol} ({timeframe})")
 
-    # Chart
+    # Chart (wie gehabt, nur mit angepasstem Titel)
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.75, 0.25])
-
     fig.add_trace(go.Candlestick(
         x=data['timestamp'], open=data['open'], high=data['high'],
         low=data['low'], close=data['close'], name='Price'
@@ -122,7 +133,6 @@ def main():
             line=dict(color='orange', width=2.5), name='Supertrend'
         ), row=1, col=1)
 
-    # S/R-Linien
     for lvl in sup_levels:
         fig.add_hline(y=lvl, line_dash="dash", line_color="lime", opacity=0.6)
     for lvl in res_levels:
@@ -143,14 +153,13 @@ def main():
         name='SHORT'
     ), row=1, col=1)
 
-    # Volume
     vol_colors = ['lime' if c >= o else 'red' for o, c in zip(data['open'], data['close'])]
     fig.add_trace(go.Bar(x=data['timestamp'], y=data['volume'], marker_color=vol_colors, name='Volume'), row=2, col=1)
 
     fig.update_layout(
         height=750, template="plotly_dark",
         xaxis_rangeslider_visible=False,
-        title=f"{symbol} 15m – S/R + Wick + Supertrend"
+        title=f"{symbol} {timeframe} – S/R + Wick + Supertrend"
     )
 
     st.plotly_chart(fig, use_container_width=True)
@@ -176,7 +185,7 @@ def main():
     else:
         st.info("Noch keine Trades.")
 
-    # Live-Refresh mit Countdown (weniger störend)
+    # Live-Refresh mit Countdown
     if live_mode:
         placeholder = st.empty()
         for seconds in range(30, 0, -1):
