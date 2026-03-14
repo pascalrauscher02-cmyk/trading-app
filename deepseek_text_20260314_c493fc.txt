@@ -1,0 +1,9 @@
+trading-app/
+├── .streamlit/
+│   └── secrets.toml          (optional, für Passwort)
+├── pages/
+│   ├── 02_Optimierung.py
+│   └── 03_Performance.py
+├── utils.py
+├── app.py
+└── requirements.txt
