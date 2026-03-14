@@ -106,8 +106,12 @@ def calculate_strategy(df, params):
     sup_levels = []
     res_levels = []
     window = params['left_bars'] + params['right_bars'] + 1
-    data['pivot_low'] = data['low'] == data['low'].rolling(window=window, center=True).min()
-    data['pivot_high'] = data['high'] == data['high'].rolling(window=window, center=True).max()
+    # Rolling-Minimum ohne center – dann werden die ersten window-1 Zeilen zu NaN, aber das ist okay
+    data['pivot_low'] = data['low'] == data['low'].rolling(window=window, center=False).min()
+    data['pivot_high'] = data['high'] == data['high'].rolling(window=window, center=False).max()
+    # NaN durch False ersetzen
+    data['pivot_low'] = data['pivot_low'].fillna(False)
+    data['pivot_high'] = data['pivot_high'].fillna(False)
 
     # Sammle Levels (nur die letzten max_levels)
     for i in range(len(data)):
